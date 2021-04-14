@@ -98,6 +98,37 @@ struct AioArgs {
   ceph::bufferlist *bl;
 };
 
+/// Define XrdCephAio class as a child of XrdSfsAio as suggested by Andreas Peters
+class XrdCephAio : public XrdSfsAio {
+public:
+    struct aiocb cephAio;  
+ 
+    virtual void doneRead() {XrdSysCondVarHelper lLock(condRead); mRead = true; condRead.Signal();}
+    virtual void doneWrite() {XrdSysCondVarHelper lLock(condWrite); mWrite = true; condWrite.Signal();}
+    virtual void Recycle() {}
+
+    void waitRead() {
+      XrdSysCondVarHelper lLock(condRead);
+      while (mRead == false) {
+         condRead.WaitMS(1);
+      }
+    }
+    void waitWrite() {     
+      XrdSysCondVarHelper lLock(condWrite);
+      while (mWrite == false) {
+         condWrite.WaitMS(1);
+      }
+    }
+   
+    XrdCephAio() { mRead = false; mWrite = false; }
+    ~XrdCephAio() {}
+private:
+   XrdSysCondVar condRead;
+   XrdSysCondVar condWrite;
+   bool mRead;
+   bool mWrite;
+};
+
 /// global variables holding stripers/ioCtxs/cluster objects
 /// Note that we have a pool of them to circumvent the limitation
 /// of having a single objecter/messenger per IoCtx
@@ -949,6 +980,46 @@ static void ceph_aio_read_complete(rados_completion_t c, void *arg) {
   }
   awa->callback(awa->aiop, rc == 0 ? awa->nbBytes : rc);
   delete(awa);
+}
+
+/// Define again the aioReadCallback function that will be passed as an arg to ceph_aio_read by ceph_posix_readV
+static void aioReadCallback(XrdSfsAio *aiop, size_t rc) {
+  aiop->Result = rc;
+  aiop->doneRead();
+}
+
+/// Implementation of the new ceph_posix_readV function as suggested by Andreas Peters
+ssize_t ceph_posix_readV(int fd, XrdOucIOVec *readV, int n) {
+    std::vector<XrdCephAio> iovec;
+    iovec.resize(n);
+    ssize_t retc=0;
+    logwrapper((char*)"Got a readV request for %d chunks", n);
+    ssize_t reqbytes=0;
+    // send all the requests
+    for (int i=0; i<n; i++) {
+        iovec[i].cephAio.aio_nbytes = readV[i].size;
+        iovec[i].cephAio.aio_offset = readV[i].offset;
+        iovec[i].cephAio.aio_buf = readV[i].data;
+        //Sum requested bytes for logging
+        reqbytes +=readV[i].size;
+        // handle the return of ceph_aio_read in case of error
+            try {
+            ceph_aio_read(fd, &(iovec[i]), aioReadCallback);
+            } catch (std::exception &e) {
+              logwrapper((char*)"Exception: %s ,when calling ceph_aio_read", e.what()); // Need to do more here...
+            }   
+        }
+    logwrapper((char*)"Requested %zu bytes from Ceph with readV", reqbytes);
+    // collect all the requests
+    for (int i=0; i<n; i++) {
+        iovec[i].waitRead();
+        // check the result code of the AIO here to indicate a possible error for readV
+        if (iovec[i].Result>0) {
+         // sum up the bytes read
+         retc += iovec[i].Result;
+           }
+        }
+   return retc;
 }
 
 ssize_t ceph_aio_read(int fd, XrdSfsAio *aiop, AioCB *cb) {
