@@ -33,6 +33,7 @@
 #include <stdarg.h>
 #include <dirent.h>
 #include <XrdOuc/XrdOucEnv.hh>
+#include <XrdOuc/XrdOucIOVec.hh>
 #include <XrdSys/XrdSysXAttr.hh>
 
 class XrdSfsAio;
