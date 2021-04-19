@@ -1003,12 +1003,15 @@ ssize_t ceph_posix_readV(int fd, XrdOucIOVec *readV, int n) {
         //Sum requested bytes for logging
         reqbytes +=readV[i].size;
         // handle the return of ceph_aio_read in case of error
-            try {
-            ceph_aio_read(fd, &(iovec[i]), aioReadCallback);
-            } catch (std::exception &e) {
-              logwrapper((char*)"Exception: %s ,when calling ceph_aio_read", e.what()); // Need to do more here...
-            }   
-        }
+        try {
+            ssize_t rc = ceph_aio_read(fd, &(iovec[i]), aioReadCallback);
+            if (rc < 0) {
+                logwrapper((char*)"Error, call to ceph_aio_read returned %zu", rc);
+            }
+        } catch (std::exception &e) {
+            logwrapper((char*)"Exception: %s ,when calling ceph_aio_read", e.what()); // Need to do more here...
+        }   
+    }
     logwrapper((char*)"Requested %zu bytes from Ceph with readV", reqbytes);
     // collect all the requests
     for (int i=0; i<n; i++) {
@@ -1017,8 +1020,11 @@ ssize_t ceph_posix_readV(int fd, XrdOucIOVec *readV, int n) {
         if (iovec[i].Result>0) {
          // sum up the bytes read
          retc += iovec[i].Result;
-           }
         }
+        else {
+         logwrapper((char*) "Error, Result is: %zu for index %d", iovec[i].Result, i);
+        }
+    }
    return retc;
 }
 
