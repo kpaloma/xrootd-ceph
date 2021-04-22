@@ -1035,7 +1035,7 @@ ssize_t ceph_aio_read(int fd, XrdSfsAio *aiop, AioCB *cb) {
     size_t count = aiop->sfsAio.aio_nbytes;
     size_t offset = aiop->sfsAio.aio_offset;
     // TODO implement proper logging level for this plugin - this should be only debug
-    //logwrapper((char*)"ceph_aio_read: for fd %d, count=%d", fd, count);
+    logwrapper((char*)"ceph_aio_read: for fd %d, count=%d", fd, count);
     if ((fr->flags & O_WRONLY) != 0) {
       return -EBADF;
     }
@@ -1057,8 +1057,17 @@ ssize_t ceph_aio_read(int fd, XrdSfsAio *aiop, AioCB *cb) {
     AioArgs *args = new AioArgs(aiop, cb, count, fd, bl);
     librados::AioCompletion *completion =
       cluster->aio_create_completion(args, ceph_aio_read_complete, NULL);
+    if (completion == NULL) {
+      logwrapper((char*)"Completion object NULL");
+      return -EINVAL;
+    }
+    logwrapper((char*)"Inside ceph_aio_read, about to do striper aio_read");
     // do the read
     int rc = striper->aio_read(fr->name, completion, bl, count, offset);
+    if (rc < 0) {
+      logwrapper((char*)"aio_read on striper object failed");
+      return rc;
+    }
     completion->release();
     XrdSysMutexHelper lock(fr->statsMutex);
     fr->asyncRdStartCount++;
