@@ -997,9 +997,11 @@ ssize_t ceph_posix_readV(int fd, XrdOucIOVec *readV, int n) {
     ssize_t reqbytes=0;
     // send all the requests
     for (int i=0; i<n; i++) {
+        logwrapper((char*)"readv[%d].size = %d", i, readV[i].size);
         iovec[i].cephAio.aio_nbytes = readV[i].size;
         iovec[i].cephAio.aio_offset = readV[i].offset;
         iovec[i].cephAio.aio_buf = readV[i].data;
+        iovec[i].cephAio.aio_fildes = fd;
         //Sum requested bytes for logging
         reqbytes +=readV[i].size;
         // handle the return of ceph_aio_read in case of error
@@ -1035,7 +1037,7 @@ ssize_t ceph_aio_read(int fd, XrdSfsAio *aiop, AioCB *cb) {
     size_t count = aiop->sfsAio.aio_nbytes;
     size_t offset = aiop->sfsAio.aio_offset;
     // TODO implement proper logging level for this plugin - this should be only debug
-    logwrapper((char*)"ceph_aio_read: for fd %d, count=%d", fd, count);
+    logwrapper((char*)"ceph_aio_read: for fd %d, count=%zu", fd, count);
     if ((fr->flags & O_WRONLY) != 0) {
       return -EBADF;
     }
