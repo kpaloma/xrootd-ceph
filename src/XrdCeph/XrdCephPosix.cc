@@ -50,6 +50,16 @@
 
 #include "XrdCeph/XrdCephPosix.hh"
 
+/// global variable for the log function
+static void (*g_logfunc) (char *, va_list argp) = 0;
+
+static void logwrapper(char* format, ...) {
+  if (0 == g_logfunc) return;
+  va_list arg;
+  va_start(arg, format);
+  (*g_logfunc)(format, arg);
+  va_end(arg);
+}
 /// small structs to store file metadata
 struct CephFile {
   std::string name;
@@ -101,7 +111,7 @@ struct AioArgs {
 /// Define XrdCephAio class as a child of XrdSfsAio as suggested by Andreas Peters
 class XrdCephAio : public XrdSfsAio {
 public:
-    struct aiocb cephAio;  
+//    struct aiocb cephAio;  
  
     virtual void doneRead() {XrdSysCondVarHelper lLock(condRead); mRead = true; condRead.Signal();}
     virtual void doneWrite() {XrdSysCondVarHelper lLock(condWrite); mWrite = true; condWrite.Signal();}
@@ -110,6 +120,7 @@ public:
     void waitRead() {
       XrdSysCondVarHelper lLock(condRead);
       while (mRead == false) {
+         logwrapper((char *)"waitRead");
          condRead.WaitMS(1);
       }
     }
@@ -244,16 +255,7 @@ CephFile g_defaultParams = { "",
 std::string g_defaultUserId = "admin";
 std::string g_defaultPool = "default";
 
-/// global variable for the log function
-static void (*g_logfunc) (char *, va_list argp) = 0;
 
-static void logwrapper(char* format, ...) {
-  if (0 == g_logfunc) return;
-  va_list arg;
-  va_start(arg, format);
-  (*g_logfunc)(format, arg);
-  va_end(arg);
-}
 
 /// simple integer parsing, to be replaced by std::stoll when C++11 can be used
 static unsigned long long int stoull(const std::string &s) {
@@ -984,6 +986,7 @@ static void ceph_aio_read_complete(rados_completion_t c, void *arg) {
 
 /// Define again the aioReadCallback function that will be passed as an arg to ceph_aio_read by ceph_posix_readV
 static void aioReadCallback(XrdSfsAio *aiop, size_t rc) {
+  logwrapper((char*)"Callback for chunk");
   aiop->Result = rc;
   aiop->doneRead();
 }
@@ -992,16 +995,17 @@ static void aioReadCallback(XrdSfsAio *aiop, size_t rc) {
 ssize_t ceph_posix_readV(int fd, XrdOucIOVec *readV, int n) {
     std::vector<XrdCephAio> iovec;
     iovec.resize(n);
-    ssize_t retc=0;
+
     logwrapper((char*)"Got a readV request for %d chunks", n);
     ssize_t reqbytes=0;
     // send all the requests
     for (int i=0; i<n; i++) {
         logwrapper((char*)"readv[%d].size = %d", i, readV[i].size);
-        iovec[i].cephAio.aio_nbytes = readV[i].size;
-        iovec[i].cephAio.aio_offset = readV[i].offset;
-        iovec[i].cephAio.aio_buf = readV[i].data;
-        iovec[i].cephAio.aio_fildes = fd;
+        iovec[i].sfsAio.aio_nbytes = (size_t)readV[i].size;
+        logwrapper((char*)"iovec[%d].sfsAio.aio_nbytes = %d", i, iovec[i].sfsAio.aio_nbytes);
+        iovec[i].sfsAio.aio_offset = readV[i].offset;
+        iovec[i].sfsAio.aio_buf = readV[i].data;
+        iovec[i].sfsAio.aio_fildes = fd;
         //Sum requested bytes for logging
         reqbytes +=readV[i].size;
         // handle the return of ceph_aio_read in case of error
@@ -1016,6 +1020,7 @@ ssize_t ceph_posix_readV(int fd, XrdOucIOVec *readV, int n) {
     }
     logwrapper((char*)"Requested %zu bytes from Ceph with readV", reqbytes);
     // collect all the requests
+    ssize_t retc=0;
     for (int i=0; i<n; i++) {
         iovec[i].waitRead();
         // check the result code of the AIO here to indicate a possible error for readV
@@ -1037,7 +1042,7 @@ ssize_t ceph_aio_read(int fd, XrdSfsAio *aiop, AioCB *cb) {
     size_t count = aiop->sfsAio.aio_nbytes;
     size_t offset = aiop->sfsAio.aio_offset;
     // TODO implement proper logging level for this plugin - this should be only debug
-    logwrapper((char*)"ceph_aio_read: for fd %d, count=%zu", fd, count);
+    logwrapper((char*)"ceph_aio_read: for fd %d, count=%d", fd, count);
     if ((fr->flags & O_WRONLY) != 0) {
       return -EBADF;
     }
