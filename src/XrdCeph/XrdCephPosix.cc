@@ -120,18 +120,17 @@ public:
     void waitRead() {
       XrdSysCondVarHelper lLock(condRead);
       while (mRead == false) {
-         logwrapper((char *)"waitRead");
-         condRead.WaitMS(1);
+         condRead.Wait();
       }
     }
     void waitWrite() {     
       XrdSysCondVarHelper lLock(condWrite);
       while (mWrite == false) {
-         condWrite.WaitMS(1);
+         condWrite.Wait();
       }
     }
    
-    XrdCephAio() { mRead = false; mWrite = false; }
+    XrdCephAio() { condRead = 0, condWrite = 0, mRead = false, mWrite = false; }
     ~XrdCephAio() {}
 private:
    XrdSysCondVar condRead;
@@ -986,7 +985,6 @@ static void ceph_aio_read_complete(rados_completion_t c, void *arg) {
 
 /// Define again the aioReadCallback function that will be passed as an arg to ceph_aio_read by ceph_posix_readV
 static void aioReadCallback(XrdSfsAio *aiop, size_t rc) {
-  logwrapper((char*)"Callback for chunk");
   aiop->Result = rc;
   aiop->doneRead();
 }
@@ -996,16 +994,13 @@ ssize_t ceph_posix_readV(int fd, XrdOucIOVec *readV, int n) {
     std::vector<XrdCephAio> iovec;
     iovec.resize(n);
 
-    logwrapper((char*)"Got a readV request for %d chunks", n);
     ssize_t reqbytes=0;
     // send all the requests
     for (int i=0; i<n; i++) {
-        logwrapper((char*)"readv[%d].size = %d", i, readV[i].size);
         iovec[i].sfsAio.aio_nbytes = (size_t)readV[i].size;
-        logwrapper((char*)"iovec[%d].sfsAio.aio_nbytes = %d", i, iovec[i].sfsAio.aio_nbytes);
         iovec[i].sfsAio.aio_offset = readV[i].offset;
         iovec[i].sfsAio.aio_buf = readV[i].data;
-        iovec[i].sfsAio.aio_fildes = fd;
+   //     iovec[i].sfsAio.aio_fildes = fd; // ?? Remove
         //Sum requested bytes for logging
         reqbytes +=readV[i].size;
         // handle the return of ceph_aio_read in case of error
@@ -1018,7 +1013,7 @@ ssize_t ceph_posix_readV(int fd, XrdOucIOVec *readV, int n) {
             logwrapper((char*)"Exception: %s ,when calling ceph_aio_read", e.what()); // Need to do more here...
         }   
     }
-    logwrapper((char*)"Requested %zu bytes from Ceph with readV", reqbytes);
+    logwrapper((char*)"Requested %zu bytes in %d chunks from Ceph with readV", reqbytes, n);
     // collect all the requests
     ssize_t retc=0;
     for (int i=0; i<n; i++) {
@@ -1042,7 +1037,6 @@ ssize_t ceph_aio_read(int fd, XrdSfsAio *aiop, AioCB *cb) {
     size_t count = aiop->sfsAio.aio_nbytes;
     size_t offset = aiop->sfsAio.aio_offset;
     // TODO implement proper logging level for this plugin - this should be only debug
-    logwrapper((char*)"ceph_aio_read: for fd %d, count=%d", fd, count);
     if ((fr->flags & O_WRONLY) != 0) {
       return -EBADF;
     }
@@ -1068,7 +1062,6 @@ ssize_t ceph_aio_read(int fd, XrdSfsAio *aiop, AioCB *cb) {
       logwrapper((char*)"Completion object NULL");
       return -EINVAL;
     }
-    logwrapper((char*)"Inside ceph_aio_read, about to do striper aio_read");
     // do the read
     int rc = striper->aio_read(fr->name, completion, bl, count, offset);
     if (rc < 0) {
