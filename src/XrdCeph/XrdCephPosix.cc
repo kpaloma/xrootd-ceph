@@ -1010,6 +1010,11 @@ int ceph_posix_fstat(int fd, struct stat *buf) {
     if (rc != 0) {
       return -rc;
     }
+    // XRootD assumes an 'offline' file if st_dev and st_ino
+    // are zero. Set to non-zero (meaningful) values to avoid this.
+    std::hash<std::string> strHash;
+    buf->st_dev = static_cast<dev_t>(strHash(fr->pool));
+    buf->st_ino = static_cast<ino_t>(strHash(fr->name));
     buf->st_mtime = buf->st_atime;
     buf->st_ctime = buf->st_atime;
     buf->st_mode = 0666 | S_IFREG;
@@ -1041,6 +1046,11 @@ int ceph_posix_stat(XrdOucEnv* env, const char *pathname, struct stat *buf) {
       return -rc;
     }
   }
+  // XRootD assumes an 'offline' file if st_dev and st_ino
+  // are zero. Set to non-zero (meaningful) values to avoid this.
+  std::hash<std::string> strHash;
+  buf->st_dev = static_cast<dev_t>(strHash(file.pool));
+  buf->st_ino = static_cast<ino_t>(strHash(file.name));
   buf->st_mtime = buf->st_atime;
   buf->st_ctime = buf->st_atime;
   buf->st_mode = 0666 | S_IFREG;
